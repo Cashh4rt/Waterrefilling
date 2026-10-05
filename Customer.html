@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0369a1">
+<title>AquaFlow</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div class="toast" id="tst"></div>
+<div class="top">
+  <div class="logo"><i>💧</i>AquaFlow</div>
+  <div class="av" id="av" onclick="if(confirm('Logout?'))logout()">U</div>
+</div>
+
+<div class="wrap">
+  <div class="hero">
+    <h1>Hello, <span id="hi">there</span> 👋</h1>
+    <p>Pure, refreshing water. Order in seconds and track it live.</p>
+    <div class="wave"></div><div class="wave w2"></div>
+  </div>
+  <div class="sec-t">💧 Our Products</div>
+  <div class="grid" id="prods"><div class="empty">Loading...</div></div>
+  <div class="sec-t">📦 My Orders</div>
+  <div id="ords"></div>
+</div>
+
+<div class="cart" id="cart" onclick="openSheet()">
+  <div><b id="cn">0 items</b><div style="font-size:12px;opacity:.9">Tap to checkout</div></div>
+  <div style="font-size:20px;font-weight:700"><span id="ct">₱0</span> →</div>
+</div>
+
+<div class="ov" id="ov" onclick="closeSheet()"></div>
+<div class="sheet" id="sh">
+  <div class="row2"><h3>🛒 Checkout</h3><b onclick="closeSheet()" style="cursor:pointer;font-size:22px">✕</b></div>
+  <div id="lines" style="margin:8px 0"></div>
+  <div class="mut">Order type</div>
+  <div class="seg">
+    <label><input type="radio" name="ot" value="delivery" checked onchange="ad.hidden=false"><span>🚚 Delivery</span></label>
+    <label><input type="radio" name="ot" value="pickup" onchange="ad.hidden=true"><span>🏪 Pickup</span></label>
+  </div>
+  <div class="mut">Payment</div>
+  <div class="seg">
+    <label><input type="radio" name="pm" value="cod" checked><span>💵 Cash</span></label>
+    <label><input type="radio" name="pm" value="gcash"><span>📲 GCash</span></label>
+  </div>
+  <textarea class="fld" id="ad" rows="2" placeholder="📍 Delivery address"></textarea>
+  <textarea class="fld" id="nt" rows="2" placeholder="📝 Notes (optional)"></textarea>
+  <div class="row2" style="margin-top:6px"><span>Total</span><b style="font-size:24px;color:var(--ac)" id="tot">₱0</b></div>
+  <button class="btn" id="pb" onclick="place()">Place Order</button>
+</div>
+
+<script>
+const ST = ["pending", "confirmed", "out_for_delivery", "delivered"];
+const LB = ["Placed", "Confirmed", "On the way", "Delivered"];
+const M = {
+  pending: ["⏳", "Waiting for confirmation", "We got your order. The station will confirm it shortly.", 8],
+  confirmed: ["🧪", "Order confirmed", "Your water is being prepared.", 38],
+  out_for_delivery: ["🚚", "On the way", "Your order is out for delivery.", 72],
+  delivered: ["✅", "Delivered", "Enjoy your fresh water! 💙", 100],
+  cancelled: ["✖️", "Cancelled", "This order was cancelled.", 0]
+};
+const LBL = { pending: "Waiting", confirmed: "Preparing", out_for_delivery: "On the way", delivered: "Delivered", cancelled: "Cancelled" };
+let P = [], me = null, q = {};
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";");
+const ico = n => /new|container/i.test(n) ? "🫙" : /1-gal|small/i.test(n) ? "🧴" : "💧";
+function toast(m) { tst.textContent = m; tst.classList.add("show"); setTimeout(() => tst.classList.remove("show"), 2800); }
+
+async function init() {
+  me = await getProfile();
+  if (!me) return location.href = "index.html";
+  if (me.role === "admin") return location.href = "admin.html";
+  hi.textContent = (me.full_name || "there").split(" ")[0];
+  av.textContent = (me.full_name || "U")[0].toUpperCase();
+  ad.value = me.address || "";
+  const { data } = await sb.from("products").select("*").eq("is_active", true).order("id");
+  P = data || [];
+  prods.innerHTML = P.map(p => `
+    <div class="prod">
+      <div class="ico">${ico(p.name)}</div>
+      <b>${esc(p.name)}</b>
+      <div class="mut">${esc(p.description)}</div>
+      <div class="price">₱${p.price}</div>
+      <div class="step">
+        <button onclick="inc(${p.id},-1)">−</button>
+        <b id="c${p.id}">0</b>
+        <button onclick="inc(${p.id},1)">+</button>
+      </div>
+    </div>`).join("") || '<div class="empty">No products yet</div>';
+  load();
+  sb.channel("mine").on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, load).subscribe();
+  sb.channel("trk").on("postgres_changes", { event: "INSERT", schema: "public", table: "order_updates" },
+    () => { load(); toast("📦 New tracking update!"); }).subscribe();
+}
+
+function inc(id, d) {
+  q[id] = Math.max(0, (q[id] || 0) + d);
+  document.getElementById("c" + id).textContent = q[id];
+  const it = P.filter(p => q[p.id] > 0);
+  const n = it.reduce((s, p) => s + q[p.id], 0);
+  const t = it.reduce((s, p) => s + p.price * q[p.id], 0);
+  cn.textContent = n + (n == 1 ? " item" : " items");
+  ct.textContent = "₱" + t; tot.textContent = "₱" + t;
+  cart.classList.toggle("show", n > 0);
+}
+
+function openSheet() {
+  lines.innerHTML = P.filter(p => q[p.id] > 0).map(p =>
+    `<div class="line"><span>${q[p.id]}× ${esc(p.name)}</span><b>₱${p.price * q[p.id]}</b></div>`).join("");
+  ov.classList.add("show"); sh.classList.add("show");
+}
+function closeSheet() { ov.classList.remove("show"); sh.classList.remove("show"); }
+
+async function place() {
+  const it = P.filter(p => q[p.id] > 0);
+  if (!it.length) return;
+  const ot = document.querySelector("input[name=ot]:checked").value;
+  const pm = document.querySelector("input[name=pm]:checked").value;
+  if (ot == "delivery" && !ad.value.trim()) return toast("📍 Please enter your address");
+  const t = it.reduce((s, p) => s + p.price * q[p.id], 0);
+  pb.disabled = true; pb.textContent = "Placing...";
+  const { data: o, error } = await sb.from("orders").insert({
+    customer_id: me.id, order_type: ot, payment_method: pm,
+    delivery_address: ot == "delivery" ? ad.value : null, notes: nt.value, total: t
+  }).select().single();
+  if (error) { pb.disabled = false; pb.textContent = "Place Order"; return toast("❌ " + error.message); }
+  const { error: e2 } = await sb.from("order_items").insert(
+    it.map(p => ({ order_id: o.id, product_id: p.id, quantity: q[p.id], unit_price: p.price })));
+  pb.disabled = false; pb.textContent = "Place Order";
+  if (e2) return toast("❌ " + e2.message);
+  q = {}; P.forEach(p => document.getElementById("c" + p.id).textContent = 0);
+  cart.classList.remove("show"); closeSheet(); nt.value = "";
+  toast("✅ Order placed successfully!"); load();
+}
+
+async function load() {
+  const { data } = await sb.from("orders")
+    .select("*, order_items(quantity, products(name)), order_updates(status, message, created_at)")
+    .eq("customer_id", me.id).order("created_at", { ascending: false });
+  ords.innerHTML = (data || []).map(o => {
+    const m = M[o.status], i = ST.indexOf(o.status);
+    const ups = (o.order_updates || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const live = o.status != "delivered" && o.status != "cancelled";
+    return `<div class="ord">
+      <div class="row2"><b>Order #${o.id}</b><span class="pill s-${o.status}">${LBL[o.status]}</span></div>
+      <div class="mut">${o.order_items.map(x => x.quantity + "× " + esc(x.products.name)).join(", ")}</div>
+      <div class="banner b-${o.status}"><div class="bi">${m[0]}</div><div><b>${m[1]}</b><small>${m[2]}</small></div></div>
+      ${o.status == "cancelled" ? "" : `<div class="bar"><i style="width:${m[3]}%"></i></div>
+        <div class="trk">${LB.map((l, k) => `<div class="${k <= i ? "on" : ""}">${l}</div>`).join("")}</div>`}
+      ${o.eta || o.rider_name ? `<div class="info">
+        ${o.eta ? `<span>⏱ ETA ${esc(o.eta)}</span>` : ""}
+        ${o.rider_name ? `<span>🧑‍✈️ ${esc(o.rider_name)}</span>` : ""}
+        ${o.rider_phone ? `<a href="tel:${esc(o.rider_phone)}"><span>📞 Call rider</span></a>` : ""}</div>` : ""}
+      <details ${live ? "open" : ""}><summary>📍 Tracking history</summary>
+        <div class="tl">${ups.map(u => `<div><b>${LBL[u.status] || u.status}</b> · ${esc(u.message)}<small>${new Date(u.created_at).toLocaleString()}</small></div>`).join("") || "<div>No updates yet</div>"}</div>
+      </details>
+      <div class="row2" style="margin-top:8px"><span class="mut">${new Date(o.created_at).toLocaleString()}</span><b>₱${o.total}</b></div>
+    </div>`;
+  }).join("") || '<div class="empty">🫗<br>No orders yet. Pick something refreshing!</div>';
+}
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0369a1">
+<title>AquaFlow Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div class="toast" id="tst"></div>
+<div class="top">
+  <div class="logo"><i>🛠</i>Admin Panel</div>
+  <span class="pill s-delivered">● Live</span>
+</div>
+
+<div class="wrap">
+  <div id="vo">
+    <div class="hero"><h1>Dashboard 📊</h1><p>Orders update in real time.</p><div class="wave"></div><div class="wave w2"></div></div>
+    <div class="stats" id="stats"></div>
+    <div class="sec-t">Orders</div>
+    <div class="chips" id="chips"></div>
+    <div id="list"></div>
+  </div>
+  <div id="vp" hidden>
+    <div class="sec-t">➕ Add Product</div>
+    <div class="ord">
+      <input class="fld" id="pn" placeholder="Product name">
+      <input class="fld" id="pd" placeholder="Description (optional)">
+      <input class="fld" id="pp" type="number" placeholder="Price (₱)">
+      <button class="btn" onclick="addP()">Add Product</button>
+    </div>
+    <div class="sec-t">🧴 Products</div>
+    <div id="plist"></div>
+  </div>
+</div>
+
+<div class="ov" id="ov" onclick="closeT()"></div>
+<div class="sheet" id="sh">
+  <div class="row2"><h3>🧭 Edit Tracking <span id="et"></span></h3><b onclick="closeT()" style="cursor:pointer;font-size:22px">✕</b></div>
+  <div class="mut">Status</div>
+  <select class="fld" id="es">
+    <option value="pending">⏳ Waiting</option>
+    <option value="confirmed">🧪 Preparing</option>
+    <option value="out_for_delivery">🚚 On the way</option>
+    <option value="delivered">✅ Delivered</option>
+    <option value="cancelled">✖️ Cancelled</option>
+  </select>
+  <textarea class="fld" id="em" rows="2" placeholder="Message to customer (shown in tracking history)"></textarea>
+  <input class="fld" id="ee" placeholder="⏱ Estimated arrival (e.g. 3:30 PM)">
+  <input class="fld" id="er" placeholder="🧑‍✈️ Rider name">
+  <input class="fld" id="ep" placeholder="📞 Rider phone">
+  <button class="btn" onclick="saveT()">Save &amp; notify customer</button>
+</div>
+
+<div class="nav">
+  <a id="na1" class="on" onclick="view(1)"><span>📋</span>Orders</a>
+  <a id="na2" onclick="view(2)"><span>🧴</span>Products</a>
+  <a onclick="if(confirm('Logout?'))logout()"><span>🚪</span>Logout</a>
+</div>
+
+<script>
+const ST = ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"];
+const NEXT = { pending: ["confirmed", "Confirm ✓"], confirmed: ["out_for_delivery", "Dispatch 🚚"], out_for_delivery: ["delivered", "Delivered ✔"] };
+const DEF = {
+  pending: "Order is waiting for confirmation.",
+  confirmed: "Order confirmed. We're preparing your water.",
+  out_for_delivery: "Your order is on the way!",
+  delivered: "Delivered. Enjoy your fresh water!",
+  cancelled: "Order was cancelled."
+};
+let O = [], F = "all", cur = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => "&#" + c.charCodeAt(0) + ";");
+const ico = n => /new|container/i.test(n) ? "🫙" : /1-gal|small/i.test(n) ? "🧴" : "💧";
+function toast(m) { tst.textContent = m; tst.classList.add("show"); setTimeout(() => tst.classList.remove("show"), 2800); }
+function view(n) {
+  vo.hidden = n != 1; vp.hidden = n != 2;
+  na1.className = n == 1 ? "on" : ""; na2.className = n == 2 ? "on" : "";
+}
+
+async function init() {
+  const p = await getProfile();
+  if (!p || p.role !== "admin") return location.href = "index.html";
+  load(); prod();
+  sb.channel("admin")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders" }, () => { toast("🔔 New order received!"); load(); })
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, load)
+    .subscribe();
+}
+
+async function load() {
+  const { data } = await sb.from("orders")
+    .select("*, profiles(full_name, phone), order_items(quantity, products(name))")
+    .order("created_at", { ascending: false });
+  O = data || []; render();
+}
+
+function render() {
+  const day = new Date().toDateString();
+  const today = O.filter(o => new Date(o.created_at).toDateString() == day);
+  const sales = today.filter(o => o.status == "delivered").reduce((s, o) => s + Number(o.total), 0);
+  const all = O.filter(o => o.status == "delivered").reduce((s, o) => s + Number(o.total), 0);
+  stats.innerHTML = `
+    <div class="stat"><small>Today's Sales</small><b>₱${sales}</b></div>
+    <div class="stat"><small>Orders Today</small><b>${today.length}</b></div>
+    <div class="stat"><small>Waiting</small><b>${O.filter(o => o.status == "pending").length}</b></div>
+    <div class="stat"><small>Total Revenue</small><b>₱${all}</b></div>`;
+  chips.innerHTML = ["all", ...ST].map(s =>
+    `<div class="chip ${F == s ? "on" : ""}" onclick="F='${s}';render()">${s.replace(/_/g, " ")} (${s == "all" ? O.length : O.filter(o => o.status == s).length})</div>`).join("");
+  list.innerHTML = O.filter(o => F == "all" || o.status == F).map(o => {
+    const n = NEXT[o.status], pr = o.profiles || {};
+    return `<div class="ord">
+      <div class="row2"><b>#${o.id} · ${esc(pr.full_name)}</b><span class="pill s-${o.status}">${o.status.replace(/_/g, " ")}</span></div>
+      ${pr.phone ? `<a class="mut" href="tel:${esc(pr.phone)}">📞 ${esc(pr.phone)}</a>` : ""}
+      <div style="margin:8px 0;font-size:14px">${o.order_items.map(i => i.quantity + "× " + esc(i.products.name)).join(", ")}</div>
+      <div class="mut">📍 ${esc(o.delivery_address) || "Pickup"}</div>
+      ${o.notes ? `<div class="mut">📝 ${esc(o.notes)}</div>` : ""}
+      ${o.eta || o.rider_name ? `<div class="mut">⏱ ${esc(o.eta) || "-"} · 🧑‍✈️ ${esc(o.rider_name) || "-"}</div>` : ""}
+      <span class="tag">${o.payment_method.toUpperCase()}</span><span class="tag">${o.payment_status}</span><span class="tag">${o.order_type}</span>
+      <div class="row2" style="margin-top:10px"><span class="mut">${new Date(o.created_at).toLocaleString()}</span><b style="font-size:19px;color:var(--ac)">₱${o.total}</b></div>
+      <div class="acts">
+        <button class="btn sm ghost" onclick="editT(${o.id})">🧭 Edit tracking</button>
+        ${n ? `<button class="btn sm" onclick="upd(${o.id},{status:'${n[0]}'})">${n[1]}</button>` : ""}
+        ${o.payment_status == "unpaid" ? `<button class="btn sm ghost" onclick="upd(${o.id},{payment_status:'paid'})">💰 Mark Paid</button>` : ""}
+        ${o.status == "pending" || o.status == "confirmed" ? `<button class="btn sm red" onclick="if(confirm('Cancel order?'))upd(${o.id},{status:'cancelled'})">Cancel</button>` : ""}
+      </div>
+    </div>`;
+  }).join("") || '<div class="empty">📭<br>No orders here</div>';
+}
+
+async function upd(id, f) {
+  const { error } = await sb.from("orders").update(f).eq("id", id);
+  if (error) return toast("❌ " + error.message);
+  if (f.status) await sb.from("order_updates").insert({ order_id: id, status: f.status, message: DEF[f.status] });
+  toast("✅ Updated"); load();
+}
+
+function editT(id) {
+  const o = O.find(x => x.id == id); cur = id;
+  et.textContent = "#" + id; es.value = o.status; em.value = "";
+  ee.value = o.eta || ""; er.value = o.rider_name || ""; ep.value = o.rider_phone || "";
+  ov.classList.add("show"); sh.classList.add("show");
+}
+function closeT() { ov.classList.remove("show"); sh.classList.remove("show"); }
+
+async function saveT() {
+  const o = O.find(x => x.id == cur), s = es.value;
+  const f = { eta: ee.value || null, rider_name: er.value || null, rider_phone: ep.value || null };
+  if (s !== o.status) f.status = s;
+  const { error } = await sb.from("orders").update(f).eq("id", cur);
+  if (error) return toast("❌ " + error.message);
+  if (s !== o.status || em.value)
+    await sb.from("order_updates").insert({ order_id: cur, status: s, message: em.value || DEF[s] });
+  closeT(); toast("✅ Tracking updated"); load();
+}
+
+async function prod() {
+  const { data } = await sb.from("products").select("*").order("id");
+  plist.innerHTML = (data || []).map(p => `
+    <div class="ord" style="opacity:${p.is_active ? 1 : .55}">
+      <div class="row2">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="ico" style="margin:0">${ico(p.name)}</div>
+          <div><b>${esc(p.name)}</b><div class="price" style="margin:0">₱${p.price}</div></div>
+        </div>
+        <div class="acts" style="margin:0">
+          <button class="btn sm ghost" onclick="editP(${p.id},${p.price})">✏️</button>
+          <button class="btn sm ${p.is_active ? "red" : ""}" onclick="togP(${p.id},${!p.is_active})">${p.is_active ? "Hide" : "Show"}</button>
+        </div>
+      </div>
+    </div>`).join("") || '<div class="empty">No products</div>';
+}
+async function addP() {
+  if (!pn.value || !pp.value) return toast("Enter name and price");
+  const { error } = await sb.from("products").insert({ name: pn.value, description: pd.value, price: Number(pp.value) });
+  if (error) return toast("❌ " + error.message);
+  pn.value = pd.value = pp.value = ""; toast("✅ Product added"); prod();
+}
+async function editP(id, old) {
+  const v = prompt("New price (₱)", old);
+  if (v === null || v === "" || isNaN(v)) return;
+  await sb.from("products").update({ price: Number(v) }).eq("id", id); toast("✅ Price updated"); prod();
+}
+async function togP(id, v) { await sb.from("products").update({ is_active: v }).eq("id", id); prod(); }
+init();
+</script>
+</body>
+</html>

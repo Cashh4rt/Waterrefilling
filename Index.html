@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0369a1">
+<title>AquaFlow</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body class="auth">
+<div class="wave"></div><div class="wave w2"></div>
+<div class="glass">
+  <div class="drop">💧</div>
+  <h2 style="text-align:center">AquaFlow</h2>
+  <p class="mut" style="text-align:center">Fresh water, delivered to your door</p>
+  <div class="tabs"><a id="t1" class="on" onclick="tab(1)">Login</a><a id="t2" onclick="tab(2)">Register</a></div>
+  <div id="f2" hidden>
+    <input class="fld" id="rn" placeholder="👤  Full name">
+    <input class="fld" id="rp" placeholder="📱  Phone number">
+    <input class="fld" id="ra" placeholder="📍  Delivery address">
+  </div>
+  <input class="fld" id="em" type="email" placeholder="✉️  Email">
+  <input class="fld" id="pw" type="password" placeholder="🔒  Password (min 6)">
+  <button class="btn" id="bt" onclick="act()">Login</button>
+  <p class="err" id="msg"></p>
+</div>
+<script>
+let mode = 1;
+for (let i = 0; i < 12; i++) {
+  const b = document.createElement("i"), s = 20 + Math.random() * 70;
+  b.className = "bub";
+  b.style.cssText = `width:${s}px;height:${s}px;left:${Math.random() * 100}%;animation-duration:${9 + Math.random() * 10}s;animation-delay:-${Math.random() * 12}s`;
+  document.body.appendChild(b);
+}
+function tab(n) {
+  mode = n;
+  t1.className = n == 1 ? "on" : "";
+  t2.className = n == 2 ? "on" : "";
+  f2.hidden = n == 1;
+  bt.textContent = n == 1 ? "Login" : "Create Account";
+  msg.textContent = "";
+}
+async function go() {
+  const p = await getProfile();
+  if (p) location.href = p.role === "admin" ? "admin.html" : "customer.html";
+}
+async function act() {
+  bt.disabled = true; bt.textContent = "Please wait...";
+  const r = mode == 1
+    ? await sb.auth.signInWithPassword({ email: em.value, password: pw.value })
+    : await sb.auth.signUp({ email: em.value, password: pw.value,
+        options: { data: { full_name: rn.value, phone: rp.value, address: ra.value } } });
+  bt.disabled = false; bt.textContent = mode == 1 ? "Login" : "Create Account";
+  if (r.error) return msg.textContent = r.error.message;
+  go();
+}
+go();
+</script>
+</body>
+</html>
